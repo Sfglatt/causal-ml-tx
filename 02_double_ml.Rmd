@@ -1,0 +1,200 @@
+---
+title: "02_double_ml"
+author: "Sglatt"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  html_document: default
+---
+
+This script performs double machine learning and causal random forest analyses to estimate the average treatment effect (ATE) and conditional average treatment effects (CATE) of a treatment on an outcome while accounting for covariates. The analysis is conducted separately for two time points: Month 3 and Month 6.
+
+It uses the book "Causal Analysis: Impact Evaluation and Causal Machine Learning with Applications in R" by Martin Huber as a guide, specifically, chapter 5 sections 2 and 4.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages}
+if (!require("dplyr")) {
+  install.packages("dplyr")
+  require("dplyr")
+}
+if (!require("grf")) {      
+  install.packages("grf")
+  require("grf")
+}
+if (!require("randomForest")) {     
+  install.packages("randomForest")
+  require("randomForest")
+}
+if (!require("causalweight")) {     
+  install.packages("causalweight")
+  require("causalweight")  
+}
+```
+ 
+# Folder for output
+```{r folder}
+if (!dir.exists("02_Output")) {
+  dir.create("02_Output")
+}
+```
+
+# Import datasets
+```{r data}
+# Import data created in 01_data.Rmd
+analysis_df_m3 <- read.csv("01_Output/Analysis_df_m3_2025-09-18.csv") # Month 3 dataset
+analysis_df_m6 <- read.csv("01_Output/Analysis_df_m6_2025-09-18.csv") # Month 6 dataset
+```
+
+# Analysis variables
+```{r vars}
+# Month 3
+X_m3 <- analysis_df_m3[, c("srcs17_0", "ssi_0", "bdi_0",  "inq_pb_0", "inq_tb_0", "sex_demo_0", "support_demo_0")] # covariates
+D_m3 <- analysis_df_m3[, c("arm_rec")] # Treatment
+Y_m3 <- analysis_df_m3[, c("srcs17_3")] # Outcome
+
+# Month 6
+X_m6 <- analysis_df_m6[, c("srcs17_0", "ssi_0", "bdi_0", "inq_pb_0", "inq_tb_0", "sex_demo_0", "support_demo_0")] # covariates
+D_m6 <- analysis_df_m6[, c("arm_rec")] # Treatment
+Y_m6 <- analysis_df_m6[, c("srcs17_6")] # Outcome
+```
+
+
+# Month 3 analysis
+
+# Double machine learning
+```{r dbl m3, eval=FALSE}
+# Double machine learning
+# By default, applies lasso regression for the estimation of propensity scores and conditional mean outcomes
+lasso_output_m3 <- treatDML(
+  y = Y_m3,
+  d = D_m3,
+  x = X_m3
+)
+
+lasso_output_m3$effect # average treatment effect (ATE) estimate
+lasso_output_m3$se # standard error
+lasso_output_m3$pval # p-value
+```
+
+# Casual forest
+```{r cf m3}
+# Causal forest
+# This predicts both Y (outcome) and D (treatment) as a function of X (covariates) using random forests and leave-one-out cross validation.
+# The predictions are used to compute residuals of the outcome and treatment
+# Predict the effect of these residuals of D on the residuals or Y as a function of X by another random forest, which averages over a large # of causal trees that use different folds of the respective tree-specific samples for modeling effect heterogeneity by a tree structure & estimating tx effects within the subsets
+
+set.seed(123456)
+
+# Fit model
+cf_m3 <- causal_forest(
+  X = X_m3,
+  Y = Y_m3,
+  W = D_m3
+)
+
+# use the causal forest output to estimate the average treatment effect (ATE) and individual treatment effects (CATE)
+ATE_m3 <- average_treatment_effect(cf_m3)
+pval_m3 <- 2 * pnorm(-abs(ATE_m3[1] / ATE_m3[2]))
+
+ATE_m3
+pval_m3
+
+# Look at individual treatment effects (conditional average treatment effect)
+CATE_m3 <- cf_m3$predictions
+hist(CATE_m3) # this shows the distribution of individual treatment effects
+summary(CATE_m3) # summary statistics of individual treatment effects
+```
+
+# What covariates drive the effect heterogeneity?
+```{r drive cate m3}
+set.seed(123456)
+# Define data frame
+dat_m3 <- data.frame(CATE_m3, X_m3)
+
+# Predict CATE as a function of X (the covariates defined earlier)
+randomf_m3 <- randomForest(CATE_m3 ~ .,
+  data = dat_m3
+)
+
+# Look at predictive importance of X
+# This is quantified as the decrease in the sum of squared residuals in a tree-based out-of-sample prediction of the CATE when including versus not including the covariate for splitting, averaged over all trees in the forest
+# A larger number = that covariate is more relevant for assessing effect heterogeneity
+randomForest::importance(randomf_m3) # Gives a residual-based importance measure (IncNodePurity).
+
+# look at direction of relationship between CATE and thwarted belongingness
+plot(X_m3$inq_tb_0, CATE_m3, 
+     xlab = "Baseline TB", 
+     ylab = "CATE")
+```
+
+# Double machine learning
+```{r dbl m6, eval=FALSE}
+# Double machine learning
+# By default, applies lasso regression for the estimation of propensity scores and conditional mean outcomes
+lasso_output_m6 <- treatDML(
+  y = Y_m6,
+  d = D_m6,
+  x = X_m6
+)
+
+lasso_output_m6$effect # average treatment effect (ATE) estimate
+lasso_output_m6$se # standard error
+lasso_output_m6$pval # p-value
+```
+
+# Casual forest
+```{r cf m6}
+# Causal forest
+# This predicts both Y (outcome) and D (treatment) as a function of X (covariates) using random forests and leave-one-out cross validation.
+# The predictions are used to compute residuals of the outcome and treatment
+# Predict the effect of these residuals of D on the residuals or Y as a function of X by another random forest, which averages over a large # of causal trees that use different folds of the respective tree-specific samples for modeling effect heterogeneity by a tree structure & estimating tx effects within the subsets
+
+set.seed(123456)
+
+# Fit model
+cf_m6 <- causal_forest(
+  X = X_m6,
+  Y = Y_m6,
+  W = D_m6
+)
+
+# use the causal forest output to estimate the average treatment effect (ATE) and individual treatment effects (CATE)
+ATE_m6 <- average_treatment_effect(cf_m6)
+pval_m6 <- 2 * pnorm(-abs(ATE_m6[1] / ATE_m6[2]))
+
+ATE_m6
+pval_m6
+
+# Look at individual treatment effects (conditional average treatment effect)
+CATE_m6 <- cf_m6$predictions
+hist(CATE_m6) # this shows the distribution of individual treatment effects
+summary(CATE_m6) # summary statistics of individual treatment effects
+```
+
+# What covariates drive the effect heterogeneity?
+```{r drive cate m6}
+set.seed(123456)
+# Define data frame
+dat_m6 <- data.frame(CATE_m6, X_m6)
+
+# Predict CATE as a function of X (the covariates defined earlier)
+randomf_m6 <- randomForest(CATE_m6 ~ .,
+  data = dat_m6
+)
+
+# Look at predictive importance of X
+# This is quantified as the decrease in the sum of squared residuals in a tree-based out-of-sample prediction of the CATE when including versus not including the covariate for splitting, averaged over all trees in the forest
+# A larger number = that covariate is more relevant for assessing effect heterogeneity
+randomForest::importance(randomf_m6) # Gives a residual-based importance measure (IncNodePurity).
+
+# look at direction of relationship between CATE and thwarted belongingness
+plot(X_m6$inq_tb_0, CATE_m6, 
+     xlab = "Baseline TB", 
+     ylab = "CATE")
+```
+
+
+

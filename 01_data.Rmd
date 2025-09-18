@@ -1,0 +1,96 @@
+---
+title: "01_data"
+author: "Sglatt"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  html_document: default
+---
+
+This script prepares the data for analysis by cleaning, reshaping, and creating analysis datasets for Month 3 and Month 6 outcomes. 
+The cleaned datasets are saved as CSV files in an "01_Output" folder.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages}
+if (!require("dplyr")) {
+  install.packages("dplyr")
+  require("dplyr")
+}
+if (!require("tidyr")) {
+  install.packages("tidyr")
+  require("tidyr")
+}
+```
+
+# Folder for output
+```{r folder}
+if (!dir.exists("01_Output")) {
+  dir.create("01_Output")
+}
+```
+
+```{r data}
+# Import data
+df <- read.csv("Raw_data/Merged_plf_data_filtered_2025-08-05.csv")
+# This dataset is from "~/Labs/Github/project-life-force/01_Created_datasets/Merged_plf_data_filtered_2025-08-05.csv"
+
+# Remove rows where month == -9
+df <- df %>%
+  filter(month != -9)
+
+colnames(df)
+
+# Make wide format for analysis
+df_wide <- df %>%
+  pivot_wider(
+    id_cols = c(id, arm_rec),
+    names_from = month,
+    values_from = -c(id, arm_rec, month),
+    names_sep = "_"
+  )
+
+# Look at it
+head(df_wide)
+
+# Check data structure
+# str(df_wide)
+
+# Covert to dataframe
+df_wide <- as.data.frame(df_wide)
+
+# Change all variables to numeric
+df_wide <- df_wide %>%
+  mutate(across(everything(), as.numeric))
+```
+
+# Prepare analysis datasets
+```{r analysis data}
+# Remove rows with NA in treatment, covariates, or month 3 outcome for analysis
+analysis_df_m3 <- df_wide %>%
+  filter(!is.na(arm_rec) & !is.na(srcs17_0) & !is.na(srcs17_3) & !is.na(ssi_0) & !is.na(bdi_0) & !is.na(inq_pb_0) & !is.na(sex_demo_0) & !is.na(support_demo_0))
+
+# N's for month 3 outcome analysis
+table(analysis_df_m3$arm_rec)
+
+# Remove rows with NA in treatment, covariates, or month 6 outcome for analysis
+analysis_df_m6 <- df_wide %>%
+  filter(!is.na(arm_rec) & !is.na(srcs17_0) & !is.na(srcs17_6) & !is.na(ssi_0) & !is.na(bdi_0) & !is.na(inq_pb_0) & !is.na(sex_demo_0) & !is.na(support_demo_0))
+
+# N's for month 6 outcome analysis
+table(analysis_df_m6$arm_rec)
+
+# Save datasets
+write.csv(analysis_df_m3,
+  file = paste0("01_Output/Analysis_df_m3_", format(Sys.Date(), "%Y-%m-%d"), ".csv"),
+  row.names = TRUE
+) 
+
+write.csv(analysis_df_m6,
+  file = paste0("01_Output/Analysis_df_m6_", format(Sys.Date(), "%Y-%m-%d"), ".csv"),
+  row.names = TRUE
+) 
+```
+
