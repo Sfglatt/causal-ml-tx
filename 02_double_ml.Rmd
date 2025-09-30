@@ -7,7 +7,7 @@ output:
   html_document: default
 ---
 
-This script performs double machine learning and causal random forest analyses to estimate the average treatment effect (ATE) and conditional average treatment effects (CATE) of a treatment on an outcome while accounting for covariates. The analysis is conducted separately for two time points: Month 3 and Month 6.
+This script performs double machine learning and causal forest analyses to estimate the average treatment effect (ATE) and conditional average treatment effects (CATE) of a treatment on an outcome while accounting for covariates. The analysis is conducted separately for two time points (Month 3 and Month 6) and treatment types (intention-to-treat and modified intention-to-treat).
 
 It uses the book "Causal Analysis: Impact Evaluation and Causal Machine Learning with Applications in R" by Martin Huber as a guide, specifically, chapter 5 sections 2 and 4.
 
@@ -32,6 +32,11 @@ if (!require("causalweight")) {
   install.packages("causalweight")
   require("causalweight")  
 }
+if (!require("ggplot2")) {     
+  install.packages("ggplot2")
+  require("ggplot2")  
+}
+
 ```
  
 # Folder for output
@@ -44,25 +49,66 @@ if (!dir.exists("02_Output")) {
 # Import datasets
 ```{r data}
 # Import data created in 01_data.Rmd
-analysis_df_m3 <- read.csv("01_Output/Analysis_df_m3_2025-09-18.csv") # Month 3 dataset
-analysis_df_m6 <- read.csv("01_Output/Analysis_df_m6_2025-09-18.csv") # Month 6 dataset
+analysis_df_m3 <- read.csv("01_Output/Analysis_df_m3_2025-09-18.csv") # Month 3 dataset (ITT)
+analysis_df_m6 <- read.csv("01_Output/Analysis_df_m6_2025-09-18.csv") # Month 6 dataset (ITT)
+
+analysis_df_m3_txd <- read.csv("01_Output/Analysis_df_m3_treated_2025-09-29.csv") # Month 3 dataset (modified ITT)
+analysis_df_m6_txd <- read.csv("01_Output/Analysis_df_m6_treated_2025-09-29.csv") # Month 6 dataset (modified ITT)
 ```
 
 # Analysis variables
 ```{r vars}
-# Month 3
-X_m3 <- analysis_df_m3[, c("srcs17_0", "ssi_0", "bdi_0",  "inq_pb_0", "inq_tb_0", "sex_demo_0", "support_demo_0")] # covariates
+# Month 3 ITT
+X_m3 <- analysis_df_m3[, c(
+  "srcs17_0", 
+  "ssi_0", 
+  "bdi_0", 
+  "inq_pb_0", 
+  "inq_tb_0", 
+  "sex_demo_0", 
+  "support_demo_0")] # covariates
 D_m3 <- analysis_df_m3[, c("arm_rec")] # Treatment
 Y_m3 <- analysis_df_m3[, c("srcs17_3")] # Outcome
 
-# Month 6
-X_m6 <- analysis_df_m6[, c("srcs17_0", "ssi_0", "bdi_0", "inq_pb_0", "inq_tb_0", "sex_demo_0", "support_demo_0")] # covariates
+# Month 6 ITT
+X_m6 <- analysis_df_m6[, c(
+  "srcs17_0", 
+  "ssi_0", 
+  "bdi_0", 
+  "inq_pb_0", 
+  "inq_tb_0", 
+  "sex_demo_0", 
+  "support_demo_0")] # covariates
 D_m6 <- analysis_df_m6[, c("arm_rec")] # Treatment
 Y_m6 <- analysis_df_m6[, c("srcs17_6")] # Outcome
+
+# Month 3 modified ITT
+X_m3_txd <- analysis_df_m3_txd[, c(
+  "srcs17_0", 
+  "ssi_0", 
+  "bdi_0", 
+  "inq_pb_0", 
+  "inq_tb_0", 
+  "sex_demo_0", 
+  "support_demo_0")] # covariates
+D_m3_txd <- analysis_df_m3_txd[, c("arm_rec")] # Treatment
+Y_m3_txd <- analysis_df_m3_txd[, c("srcs17_3")] # Outcome
+
+# Month 6 modified ITT
+X_m6_txd <- analysis_df_m6_txd[, c(
+  "srcs17_0", 
+  "ssi_0", 
+  "bdi_0", 
+  "inq_pb_0",
+  "inq_tb_0", 
+  "sex_demo_0", 
+  "support_demo_0")] # covariates
+D_m6_txd <- analysis_df_m6_txd[, c("arm_rec")] # Treatment
+Y_m6_txd <- analysis_df_m6_txd[, c("srcs17_6")] # Outcome
 ```
 
 
-# Month 3 analysis
+# Month 3 analysis, ITT
 
 # Double machine learning
 ```{r dbl m3, eval=FALSE}
@@ -79,12 +125,13 @@ lasso_output_m3$se # standard error
 lasso_output_m3$pval # p-value
 ```
 
-# Casual forest
+# Causal forest
 ```{r cf m3}
 # Causal forest
 # This predicts both Y (outcome) and D (treatment) as a function of X (covariates) using random forests and leave-one-out cross validation.
 # The predictions are used to compute residuals of the outcome and treatment
-# Predict the effect of these residuals of D on the residuals or Y as a function of X by another random forest, which averages over a large # of causal trees that use different folds of the respective tree-specific samples for modeling effect heterogeneity by a tree structure & estimating tx effects within the subsets
+
+# Predict the effect of these residuals of D on the residuals of Y as a function of X by another random forest, which averages over a large # of causal trees that use different folds of the respective tree-specific samples for modeling effect heterogeneity by a tree structure & estimating tx effects within the subsets
 
 set.seed(123456)
 
@@ -123,12 +170,141 @@ randomf_m3 <- randomForest(CATE_m3 ~ .,
 # This is quantified as the decrease in the sum of squared residuals in a tree-based out-of-sample prediction of the CATE when including versus not including the covariate for splitting, averaged over all trees in the forest
 # A larger number = that covariate is more relevant for assessing effect heterogeneity
 randomForest::importance(randomf_m3) # Gives a residual-based importance measure (IncNodePurity).
-
-# look at direction of relationship between CATE and thwarted belongingness
-plot(X_m3$inq_tb_0, CATE_m3, 
-     xlab = "Baseline TB", 
-     ylab = "CATE")
 ```
+
+
+# visualize relationships between CATE and the suicide related baseline characteristics
+```{r vis drive cate m3}
+# Dataframe for vis
+df <- data.frame(
+  CATE = CATE_m3,
+  srcs17_0 = X_m3$srcs17_0,
+  ssi_0 = X_m3$ssi_0,
+  bdi_0 = X_m3$bdi_0,
+  inq_pb_0 = X_m3$inq_pb_0,
+  inq_tb_0 = X_m3$inq_tb_0
+)
+
+# Variable names for vis
+var_labels <- c(
+  srcs17_0 = "Suicide-Related Coping",
+  ssi_0 = "Suicidal Ideation",
+  bdi_0 = "Depression",
+  inq_pb_0 = "Perceived Burden",
+  inq_tb_0 = "Thwarted Belonging"
+)
+
+# Scatterplot
+df_long <- df %>%
+  pivot_longer(
+    cols = -CATE,
+    names_to = "Covariate",
+    values_to = "Value"
+  ) %>%
+  mutate(Covariate = recode(Covariate, !!!var_labels))
+
+ggplot(df_long, aes(x = Value, y = CATE)) +
+  geom_point(alpha = 0.5, color = "steelblue") +
+  facet_wrap(~ Covariate, scales = "free_x") +
+  labs(
+    x = "Baseline features",
+    y = "Conditional Average Treatment Effect (CATE)",
+    title = "Relationships between baseline features and CATE"
+  ) +
+  theme_minimal(base_size = 14)
+
+# Correlation matrix 
+corr_mat <- cor(df, use = "pairwise.complete.obs")
+colnames(corr_mat) <- rownames(corr_mat) <- c("CATE", var_labels)
+
+ggcorrplot(
+  corr_mat,
+  lab = TRUE,
+  lab_size = 3,
+  type = "lower",
+  hc.order = TRUE,
+  outline.color = "white",
+  colors = c("#BF3EFF", "white", "#1E90FF")
+) +
+  labs(title = "Correlations between CATE and baseline features") +
+  theme_minimal(base_size = 11) +
+  theme(
+    axis.text.x = element_text(
+      angle = 45,        
+      vjust = 1,         
+      hjust = 1,         
+      size = 11          
+    ),
+    axis.text.y = element_text(size = 11)
+  )
+```
+
+# Month 3 analysis, modified ITT
+
+# Double machine learning
+```{r dbl m3_txd, eval=FALSE}
+# Double machine learning
+# By default, applies lasso regression for the estimation of propensity scores and conditional mean outcomes
+lasso_output_m3_txd <- treatDML(
+  y = Y_m3_txd,
+  d = D_m3_txd,
+  x = X_m3_txd
+)
+
+lasso_output_m3_txd$effect # average treatment effect (ATE) estimate
+lasso_output_m3_txd$se # standard error
+lasso_output_m3_txd$pval # p-value
+```
+
+# Causal forest
+```{r cf m3_txd}
+# Causal forest
+# This predicts both Y (outcome) and D (treatment) as a function of X (covariates) using random forests and leave-one-out cross validation.
+# The predictions are used to compute residuals of the outcome and treatment
+
+# Predict the effect of these residuals of D on the residuals of Y as a function of X by another random forest, which averages over a large # of causal trees that use different folds of the respective tree-specific samples for modeling effect heterogeneity by a tree structure & estimating tx effects within the subsets
+
+set.seed(123456)
+
+# Fit model
+cf_m3_txd <- causal_forest(
+  X = X_m3_txd,
+  Y = Y_m3_txd,
+  W = D_m3_txd
+)
+
+# use the causal forest output to estimate the average treatment effect (ATE) and individual treatment effects (CATE)
+ATE_m3_txd <- average_treatment_effect(cf_m3_txd)
+pval_m3_txd <- 2 * pnorm(-abs(ATE_m3_txd[1] / ATE_m3_txd[2]))
+
+ATE_m3_txd
+pval_m3_txd
+
+# Look at individual treatment effects (conditional average treatment effect)
+CATE_m3_txd <- cf_m3_txd$predictions
+hist(CATE_m3_txd) # this shows the distribution of individual treatment effects
+summary(CATE_m3_txd) # summary statistics of individual treatment effects
+```
+
+# What covariates drive the effect heterogeneity?
+```{r drive cate m3_txd}
+set.seed(123456)
+# Define data frame
+dat_m3_txd <- data.frame(CATE_m3_txd, X_m3_txd)
+
+# Predict CATE as a function of X (the covariates defined earlier)
+randomf_m3_txd <- randomForest(CATE_m3_txd ~ .,
+  data = dat_m3_txd
+)
+
+# Look at predictive importance of X
+# This is quantified as the decrease in the sum of squared residuals in a tree-based out-of-sample prediction of the CATE when including versus not including the covariate for splitting, averaged over all trees in the forest
+# A larger number = that covariate is more relevant for assessing effect heterogeneity
+randomForest::importance(randomf_m3_txd) # Gives a residual-based importance measure (IncNodePurity).
+```
+
+
+# Month 6 analysis
 
 # Double machine learning
 ```{r dbl m6, eval=FALSE}
@@ -145,12 +321,12 @@ lasso_output_m6$se # standard error
 lasso_output_m6$pval # p-value
 ```
 
-# Casual forest
+# causal forest
 ```{r cf m6}
 # Causal forest
 # This predicts both Y (outcome) and D (treatment) as a function of X (covariates) using random forests and leave-one-out cross validation.
 # The predictions are used to compute residuals of the outcome and treatment
-# Predict the effect of these residuals of D on the residuals or Y as a function of X by another random forest, which averages over a large # of causal trees that use different folds of the respective tree-specific samples for modeling effect heterogeneity by a tree structure & estimating tx effects within the subsets
+# Predict the effect of these residuals of D on the residuals of Y as a function of X by another random forest, which averages over a large # of causal trees that use different folds of the respective tree-specific samples for modeling effect heterogeneity by a tree structure & estimating tx effects within the subsets
 
 set.seed(123456)
 
@@ -189,11 +365,135 @@ randomf_m6 <- randomForest(CATE_m6 ~ .,
 # This is quantified as the decrease in the sum of squared residuals in a tree-based out-of-sample prediction of the CATE when including versus not including the covariate for splitting, averaged over all trees in the forest
 # A larger number = that covariate is more relevant for assessing effect heterogeneity
 randomForest::importance(randomf_m6) # Gives a residual-based importance measure (IncNodePurity).
+```
 
-# look at direction of relationship between CATE and thwarted belongingness
-plot(X_m6$inq_tb_0, CATE_m6, 
-     xlab = "Baseline TB", 
-     ylab = "CATE")
+# visualize relationships between CATE and the suicide related baseline characteristics
+```{r vis drive cate m6}
+# Dataframe for vis
+df <- data.frame(
+  CATE = CATE_m6,
+  srcs17_0 = X_m6$srcs17_0,
+  ssi_0 = X_m6$ssi_0,
+  bdi_0 = X_m6$bdi_0,
+  inq_pb_0 = X_m6$inq_pb_0,
+  inq_tb_0 = X_m6$inq_tb_0
+)
+
+# Variable names for vis
+var_labels <- c(
+  srcs17_0 = "Suicide-Related Coping",
+  ssi_0 = "Suicidal Ideation",
+  bdi_0 = "Depression",
+  inq_pb_0 = "Perceived Burden",
+  inq_tb_0 = "Thwarted Belonging"
+)
+
+# Scatterplot
+df_long <- df %>%
+  pivot_longer(
+    cols = -CATE,
+    names_to = "Covariate",
+    values_to = "Value"
+  ) %>%
+  mutate(Covariate = recode(Covariate, !!!var_labels))
+
+ggplot(df_long, aes(x = Value, y = CATE)) +
+  geom_point(alpha = 0.5, color = "steelblue") +
+  facet_wrap(~ Covariate, scales = "free_x") +
+  labs(
+    x = "Baseline features",
+    y = "Conditional Average Treatment Effect (CATE)",
+    title = "Relationships between baseline features and CATE"
+  ) +
+  theme_minimal(base_size = 14)
+
+# Correlation matrix 
+corr_mat <- cor(df, use = "pairwise.complete.obs")
+colnames(corr_mat) <- rownames(corr_mat) <- c("CATE", var_labels)
+
+ggcorrplot(
+  corr_mat,
+  lab = TRUE,
+  lab_size = 3,
+  type = "lower",
+  hc.order = TRUE,
+  outline.color = "white",
+  colors = c("#BF3EFF", "white", "#1E90FF")
+) +
+  labs(title = "Correlations between CATE and baseline features") +
+  theme_minimal(base_size = 11) +
+  theme(
+    axis.text.x = element_text(
+      angle = 45,        
+      vjust = 1,         
+      hjust = 1,         
+      size = 11          
+    ),
+    axis.text.y = element_text(size = 11)
+  )
+```
+# Month 6 analysis, modified ITT
+
+# Double machine learning
+```{r dbl m6_txd, eval=FALSE}
+# Double machine learning
+# By default, applies lasso regression for the estimation of propensity scores and conditional mean outcomes
+lasso_output_m6_txd <- treatDML(
+  y = Y_m6_txd,
+  d = D_m6_txd,
+  x = X_m6_txd
+)
+
+lasso_output_m6_txd$effect # average treatment effect (ATE) estimate
+lasso_output_m6_txd$se # standard error
+lasso_output_m6_txd$pval # p-value
+```
+
+# Causal forest
+```{r cf m6_txd}
+# Causal forest
+# This predicts both Y (outcome) and D (treatment) as a function of X (covariates) using random forests and leave-one-out cross validation.
+# The predictions are used to compute residuals of the outcome and treatment
+
+# Predict the effect of these residuals of D on the residuals of Y as a function of X by another random forest, which averages over a large # of causal trees that use different folds of the respective tree-specific samples for modeling effect heterogeneity by a tree structure & estimating tx effects within the subsets
+
+set.seed(123456)
+
+# Fit model
+cf_m6_txd <- causal_forest(
+  X = X_m6_txd,
+  Y = Y_m6_txd,
+  W = D_m6_txd
+)
+
+# use the causal forest output to estimate the average treatment effect (ATE) and individual treatment effects (CATE)
+ATE_m6_txd <- average_treatment_effect(cf_m6_txd)
+pval_m6_txd <- 2 * pnorm(-abs(ATE_m6_txd[1] / ATE_m6_txd[2]))
+
+ATE_m6_txd
+pval_m6_txd
+
+# Look at individual treatment effects (conditional average treatment effect)
+CATE_m6_txd <- cf_m6_txd$predictions
+hist(CATE_m6_txd) # this shows the distribution of individual treatment effects
+summary(CATE_m6_txd) # summary statistics of individual treatment effects
+```
+
+# What covariates drive the effect heterogeneity?
+```{r drive cate m6_txd}
+set.seed(123456)
+# Define data frame
+dat_m6_txd <- data.frame(CATE_m6_txd, X_m6_txd)
+
+# Predict CATE as a function of X (the covariates defined earlier)
+randomf_m6_txd <- randomForest(CATE_m6_txd ~ .,
+  data = dat_m6_txd
+)
+
+# Look at predictive importance of X
+# This is quantified as the decrease in the sum of squared residuals in a tree-based out-of-sample prediction of the CATE when including versus not including the covariate for splitting, averaged over all trees in the forest
+# A larger number = that covariate is more relevant for assessing effect heterogeneity
+randomForest::importance(randomf_m6_txd) # Gives a residual-based importance measure (IncNodePurity).
 ```
 
 

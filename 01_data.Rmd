@@ -23,6 +23,10 @@ if (!require("tidyr")) {
   install.packages("tidyr")
   require("tidyr")
 }
+if (!require("readxl")) {
+  install.packages("readxl")
+  require("readxl")
+}
 ```
 
 # Folder for output
@@ -63,34 +67,130 @@ df_wide <- as.data.frame(df_wide)
 
 # Change all variables to numeric
 df_wide <- df_wide %>%
-  mutate(across(everything(), as.numeric))
+  mutate(across(-id, as.numeric))
 ```
 
-# Prepare analysis datasets
+# Add number of sessions attended
+```{r sessions}
+# Add treatment sessions data to the full dataset
+path <- "~/Labs/Github/project-life-force/project-life-force/Raw_datasets/database_11-29-2024.xlsx"
+excel_sheets(path)
+sessions <- readxl::read_excel(path, sheet = "sessions")
+
+# Fix variable names
+colnames(sessions)
+(colnames(sessions) <- gsub("\\s+", "_", colnames(sessions))) # make useable
+
+# New session count
+# Add up the *number* of sessions they attended for a total session count & add it to the wide dataset
+df_wide <- df_wide %>%
+  left_join(
+    sessions %>%
+      group_by(id) %>%
+      summarise(n_sessions_attend = if_else(any(arm == 1), sum(!is.na(date)), NA_integer_)),
+    by = "id"
+  )
+
+# new variable for treatment initiation
+df_wide <- df_wide %>%
+  mutate(
+    initiated = case_when(
+      arm_rec == 0 ~ 1,  # Everyone in TAU arm = 1 
+      n_sessions_attend > 0 ~ 1, # Everyone with at least one PLF session
+      TRUE ~ 0  # Otherwise not initiated
+    )
+  )
+
+# Verify numbers
+table(df_wide$initiated)
+table(df_wide[df_wide$arm_rec == 1,]$initiated)
+```
+
+
+# Prepare analysis datasets for intent-to-treat
 ```{r analysis data}
+# Prepare analysis datasets for intent-to-treat
 # Remove rows with NA in treatment, covariates, or month 3 outcome for analysis
 analysis_df_m3 <- df_wide %>%
-  filter(!is.na(arm_rec) & !is.na(srcs17_0) & !is.na(srcs17_3) & !is.na(ssi_0) & !is.na(bdi_0) & !is.na(inq_pb_0) & !is.na(sex_demo_0) & !is.na(support_demo_0))
+  filter(
+    !is.na(arm_rec) &
+    !is.na(srcs17_0) &
+    !is.na(srcs17_3) &
+    !is.na(inq_tb_0) &
+    !is.na(ssi_0) &
+    !is.na(bdi_0) &
+    !is.na(inq_pb_0) &
+    !is.na(sex_demo_0) &
+    !is.na(support_demo_0)
+  )
 
 # N's for month 3 outcome analysis
 table(analysis_df_m3$arm_rec)
 
 # Remove rows with NA in treatment, covariates, or month 6 outcome for analysis
 analysis_df_m6 <- df_wide %>%
-  filter(!is.na(arm_rec) & !is.na(srcs17_0) & !is.na(srcs17_6) & !is.na(ssi_0) & !is.na(bdi_0) & !is.na(inq_pb_0) & !is.na(sex_demo_0) & !is.na(support_demo_0))
+  filter(
+    !is.na(arm_rec) &
+    !is.na(srcs17_0) &
+    !is.na(srcs17_6) &
+    !is.na(inq_tb_0) &
+    !is.na(ssi_0) &
+    !is.na(bdi_0) &
+    !is.na(inq_pb_0) &
+    !is.na(sex_demo_0) &
+    !is.na(support_demo_0)
+  )
 
 # N's for month 6 outcome analysis
 table(analysis_df_m6$arm_rec)
+```
 
+# Analysis datasets for "treated" sample 
+```{r}
+# Prepare analysis datasets for "treated" sample
+# Month 3 treated sample
+analysis_df_m3_treated <- analysis_df_m3 %>%
+  filter(initiated == 1)
+
+# Check counts
+table(analysis_df_m3_treated$arm_rec)
+
+# Month 6 treated sample
+analysis_df_m6_treated <- analysis_df_m6 %>%
+  filter(initiated == 1)
+
+# Check counts
+table(analysis_df_m6_treated$arm_rec)
+```
+
+# Save data
+```{r analysis data, eval=FALSE}
 # Save datasets
+# Intent-to-treat, month 3 outcome
 write.csv(analysis_df_m3,
   file = paste0("01_Output/Analysis_df_m3_", format(Sys.Date(), "%Y-%m-%d"), ".csv"),
   row.names = TRUE
 ) 
 
+# Intent-to-treat, month 6 outcome
 write.csv(analysis_df_m6,
   file = paste0("01_Output/Analysis_df_m6_", format(Sys.Date(), "%Y-%m-%d"), ".csv"),
   row.names = TRUE
 ) 
+
+# Treated, month 3 outcome
+write.csv(analysis_df_m3_treated,
+  file = paste0("01_Output/Analysis_df_m3_treated_", format(Sys.Date(), "%Y-%m-%d"), ".csv"),
+  row.names = TRUE
+) 
+
+# Treated, month 6 outcome
+write.csv(analysis_df_m6_treated,
+  file = paste0("01_Output/Analysis_df_m6_treated_", format(Sys.Date(), "%Y-%m-%d"), ".csv"),
+  row.names = TRUE
+) 
+
+# 09-18: initial original datasets
+# 09-29: added sessions and filtered by treatment engagement
 ```
 
